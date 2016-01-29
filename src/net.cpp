@@ -69,6 +69,53 @@ namespace {
     };
 }
 
+// by kangmo
+int DumpHex(void * source, unsigned long length) {
+    unsigned long address = 0;
+	char c;
+	char * data = (char*)source;
+
+	cout << hex << setfill('0');
+	while( address < length )
+	{
+		int nread;
+		char buf[16];
+
+		for( nread = 0; nread < 16 ; nread++ ) {
+			buf[nread]=data[address++];
+		}
+
+		if( nread == 0 ) break;
+
+		// Show the address
+		cout << setw(8) << address;
+
+		// Show the hex codes
+		for( int i = 0; i < 16; i++ )
+		{
+			if( i % 8 == 0 ) cout << ' ';
+			if( i < nread )
+				cout << ' ' << setw(2) << (unsigned)buf[i];
+			else
+				cout << "   ";
+		}
+
+		// Show printable characters
+		cout << "  ";
+		for( int i = 0; i < nread; i++)
+		{
+			if( buf[i] < 32 ) cout << '.';
+			else cout << buf[i];
+		}
+
+		cout << "\n";
+		address += 16;
+	}
+	return 0;
+}
+// by kangmo
+
+
 const static std::string NET_MESSAGE_COMMAND_OTHER = "*other*";
 
 //
@@ -691,6 +738,14 @@ bool CNode::ReceiveMsgBytes(const char *pch, unsigned int nBytes)
 
         if (msg.complete()) {
 
+        	// by Kangmo
+        	printf("[NET] recv; header:");
+        	DumpHex(&msg.hdrbuf[0], msg.nHdrPos);
+
+        	printf("[NET] recv; data:");
+			DumpHex(&msg.vRecv[0], msg.nDataPos);
+        	// by Kangmo
+
             //store received bytes per message command
             //to prevent a memory DOS, only allow valid commands
             mapMsgCmdSize::iterator i = mapRecvBytesPerMsgCmd.find(msg.hdr.pchCommand);
@@ -759,9 +814,6 @@ int CNetMessage::readData(const char *pch, unsigned int nBytes)
 
 
 
-
-
-
 // requires LOCK(cs_vSend)
 void SocketSendData(CNode *pnode)
 {
@@ -770,6 +822,12 @@ void SocketSendData(CNode *pnode)
     while (it != pnode->vSendMsg.end()) {
         const CSerializeData &data = *it;
         assert(data.size() > pnode->nSendOffset);
+
+        // by kmkim
+        printf("[SocketSendData]\n");
+        DumpHex((void*)&data, (unsigned long)data.size());
+        // by kmkim
+
         int nBytes = send(pnode->hSocket, &data[pnode->nSendOffset], data.size() - pnode->nSendOffset, MSG_NOSIGNAL | MSG_DONTWAIT);
         if (nBytes > 0) {
             pnode->nLastSend = GetTime();
