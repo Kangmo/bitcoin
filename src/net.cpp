@@ -69,48 +69,64 @@ namespace {
     };
 }
 
+CMessageHeader * DumpHeader(void * source) {
+
+	CMessageHeader * p = (CMessageHeader *)source;
+	printf("<Header> Magic:%s, Command:%s, Size:%d, Checksum:%d\n",
+			string(p->pchMessageStart, sizeof(p->pchMessageStart)).c_str(),
+			string(p->pchCommand, sizeof(p->pchCommand)).c_str(),
+			p->nMessageSize,
+			p->nChecksum);
+	return p;
+}
+
 // by kangmo
-int DumpHex(void * source, unsigned long length) {
+int DumpHex(void * source, unsigned int length) {
+	std::stringstream sstream;
     unsigned long address = 0;
 	char c;
-	char * data = (char*)source;
+	unsigned char  * data = (unsigned char*)source;
 
-	cout << hex << setfill('0');
+	sstream << hex << setfill('0');
 	while( address < length )
 	{
 		int nread;
-		char buf[16];
+		unsigned char buf[16];
 
-		for( nread = 0; nread < 16 ; nread++ ) {
-			buf[nread]=data[address++];
+		for( nread = 0; nread < 16 && (address+nread) < length ; nread++ ) {
+			buf[nread]=data[address+nread];
 		}
 
 		if( nread == 0 ) break;
 
 		// Show the address
-		cout << setw(8) << address;
+		sstream << setw(8) << address;
 
 		// Show the hex codes
 		for( int i = 0; i < 16; i++ )
 		{
-			if( i % 8 == 0 ) cout << ' ';
+			if( i % 8 == 0 ) sstream << ' ';
 			if( i < nread )
-				cout << ' ' << setw(2) << (unsigned)buf[i];
+				sstream << ' ' << setw(2) << (unsigned)buf[i];
 			else
-				cout << "   ";
+				sstream << "   ";
 		}
 
 		// Show printable characters
-		cout << "  ";
+		sstream << "  ";
 		for( int i = 0; i < nread; i++)
 		{
-			if( buf[i] < 32 ) cout << '.';
-			else cout << buf[i];
+			if( buf[i] < 32 ) sstream << '.';
+			else sstream << buf[i];
 		}
 
-		cout << "\n";
+		sstream << "\n";
 		address += 16;
 	}
+	//LogPrint("proto", sstream.str());
+	printf("dumping data len : %d\n", length);
+	cout << sstream.str();
+
 	return 0;
 }
 // by kangmo
@@ -739,11 +755,12 @@ bool CNode::ReceiveMsgBytes(const char *pch, unsigned int nBytes)
         if (msg.complete()) {
 
         	// by Kangmo
-        	printf("[NET] recv; header:");
+        	printf("[NET] recv; header:\n");
+        	CMessageHeader * header = DumpHeader(&msg.hdrbuf[0]);
         	DumpHex(&msg.hdrbuf[0], msg.nHdrPos);
 
-        	printf("[NET] recv; data:");
-			DumpHex(&msg.vRecv[0], msg.nDataPos);
+        	printf("[NET] recv; data:\n");
+			DumpHex(&msg.vRecv[0], header->nMessageSize);
         	// by Kangmo
 
             //store received bytes per message command
@@ -824,8 +841,9 @@ void SocketSendData(CNode *pnode)
         assert(data.size() > pnode->nSendOffset);
 
         // by kmkim
-        printf("[SocketSendData]\n");
-        DumpHex((void*)&data, (unsigned long)data.size());
+        printf("[NET] SocketSendData\n");
+    	DumpHeader((void*)&data[0]);
+        DumpHex((void*)&data[0], (unsigned long)data.size());
         // by kmkim
 
         int nBytes = send(pnode->hSocket, &data[pnode->nSendOffset], data.size() - pnode->nSendOffset, MSG_NOSIGNAL | MSG_DONTWAIT);
