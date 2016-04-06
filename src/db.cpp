@@ -468,6 +468,7 @@ bool CTxDB::WriteBestInvalidWork(CBigNum bnBestInvalidWork)
     return Write(string("bnBestInvalidWork"), bnBestInvalidWork);
 }
 
+// kangmo : comment - InsertBlockIndex finds the blockIndex of the given hash from mapBlockIndex, if not found, create a new one.
 CBlockIndex static * InsertBlockIndex(uint256 hash)
 {
     if (hash == 0)
@@ -520,6 +521,7 @@ bool CTxDB::LoadBlockIndex()
             ssValue >> diskindex;
 
             // Construct block index object
+            // kangmo : comment - InsertBlockIndex finds the blockIndex of the given hash from mapBlockIndex, if not found, create a new one.
             CBlockIndex* pindexNew = InsertBlockIndex(diskindex.GetBlockHash());
             pindexNew->pprev          = InsertBlockIndex(diskindex.hashPrev);
             pindexNew->pnext          = InsertBlockIndex(diskindex.hashNext);

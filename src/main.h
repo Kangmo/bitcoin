@@ -1301,6 +1301,7 @@ public:
         return vHave.empty();
     }
 
+    // kangmo : comment - Traversing the blockchain backward from pindex, add block hashes to vHave. After adding 10 block hashes, jump blocks exponentially(x2).
     void Set(const CBlockIndex* pindex)
     {
         vHave.clear();

@@ -46,9 +46,11 @@ int64 nTimeBestReceived = 0;
 CMedianFilter<int> cPeerBlockCounts(5, 0); // Amount of blocks that other nodes claim to have
 
 map<uint256, CBlock*> mapOrphanBlocks;
+// kangmo : comment - orphan blocks by the previous hash of it. Because multiple orphan blocks may have the same 'previous hash', we need to use multimap.
 multimap<uint256, CBlock*> mapOrphanBlocksByPrev;
 
 map<uint256, CDataStream*> mapOrphanTransactions;
+// kangmo : comment - orphan transactions by the transaction hash in an outpoint of it. Because multiple orphan transactions may exists for the same transaction hash of an outpoint, we need to use multimap.
 multimap<uint256, CDataStream*> mapOrphanTransactionsByPrev;
 
 
@@ -602,6 +604,7 @@ bool CWalletTx::AcceptWalletTransaction()
     return AcceptWalletTransaction(txdb);
 }
 
+// kangmo : comment - return the height of the block if it is on the main chain. otherwise return 0.
 int CTxIndex::GetDepthInMainChain() const
 {
     // Read block header
@@ -820,7 +823,8 @@ bool CTransaction::DisconnectInputs(CTxDB& txdb)
     return true;
 }
 
-
+// kangmo : comment - return true if all inputs are connected to a valid transaction outputs. return false otherwise.
+// kangmo : comment - add the transaction and previous transactions. For previous transactions, mark the used outputs.
 bool CTransaction::ConnectInputs(CTxDB& txdb, map<uint256, CTxIndex>& mapTestPool, CDiskTxPos posThisTx,
                                  CBlockIndex* pindexBlock, int64& nFees, bool fBlock, bool fMiner, int64 nMinFee)
 {
@@ -853,7 +857,7 @@ bool CTransaction::ConnectInputs(CTxDB& txdb, map<uint256, CTxIndex>& mapTestPoo
 
             // Read txPrev
             CTransaction txPrev;
-            // kangmo : question - when does CTxIndex.pos becomes CDiskTxPos(1,1,1)?
+            // kangmo : CTxIndex.pos == CDiskTxPos(1,1,1) means the transaction is not on disk, but on the mempool.
             if (!fFound || txindex.pos == CDiskTxPos(1,1,1)) // kangmo : comment - If the transaction is not found on disk, get it from the mempool.
             {
                 // Get prev tx from single transactions in memory
@@ -1418,8 +1422,10 @@ bool CBlock::AcceptBlock()
     return true;
 }
 
+// kangmo : comment - (P1) After receiving a block from a peer, add to the blockchain.
 bool ProcessBlock(CNode* pfrom, CBlock* pblock)
 {
+	// kangmo : comment - Step 1 : Run basic checks
     // Check for duplicate
     uint256 hash = pblock->GetHash();
     if (mapBlockIndex.count(hash))
@@ -1431,6 +1437,7 @@ bool ProcessBlock(CNode* pfrom, CBlock* pblock)
     if (!pblock->CheckBlock())
         return error("ProcessBlock() : CheckBlock FAILED");
 
+	// kangmo : comment - Step 2 : Keep the orphan block in memory if the previous block does not exist.
     // If don't already have its previous block, shunt it off to holding area until we get it
     if (!mapBlockIndex.count(pblock->hashPrevBlock))
     {
@@ -1445,10 +1452,12 @@ bool ProcessBlock(CNode* pfrom, CBlock* pblock)
         return true;
     }
 
+	// kangmo : comment - Step 3 : Store the block to the blockchain if the previous block exists.
     // Store to disk
     if (!pblock->AcceptBlock())
         return error("ProcessBlock() : AcceptBlock FAILED");
 
+    // kangmo : comment - Step 4 : Recursively bring any orphan blocks to blockchain, if the new block is the previous block of any orphan block.
     // Recursively process any orphan blocks that depended on this one
     vector<uint256> vWorkQueue;
     vWorkQueue.push_back(hash);
@@ -1478,7 +1487,7 @@ bool ProcessBlock(CNode* pfrom, CBlock* pblock)
 
 
 
-
+// kangmo : comment - called when (1) bitcoind starts (2) writing a block onto disk.
 bool CheckDiskSpace(uint64 nAdditionalBytes)
 {
     uint64 nFreeBytesAvailable = filesystem::space(GetDataDir()).available;
@@ -2697,6 +2706,7 @@ int static FormatHashBlocks(void* pbuffer, unsigned int len)
 static const unsigned int pSHA256InitState[8] =
 {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
 
+// kangmo : comment - calculate SAH256 hash from the input. Use only 64 bytes from the given input.
 void SHA256Transform(void* pstate, void* pinput, const void* pinit)
 {
     SHA256_CTX ctx;
@@ -2749,10 +2759,13 @@ unsigned int static ScanHash_CryptoPP(char* pmidstate, char* pdata, char* phash1
 }
 
 // Some explaining would be appreciated
+// kangmo : comment - An orphan transaction, which has at least an outpoint(for an input) that points to a transaction that does not exist yet.
 class COrphan
 {
 public:
+	// kangmo : comment - the orphan transaction.
     CTransaction* ptx;
+    // kangmo : comment - missing transactions that this transaction depends on.
     set<uint256> setDependsOn;
     double dPriority;
 
@@ -2799,11 +2812,14 @@ CBlock* CreateNewBlock(CReserveKey& reservekey)
 
         // Priority order to process transactions
         list<COrphan> vOrphan; // list memory doesn't move
+        // kangmo : comment - keeps a list of orphan transactions that depend on the given transaction.
         map<uint256, vector<COrphan*> > mapDependers;
+        // kangmo : comment - keeps non-orphan transactions by (priority * -1).
         multimap<double, CTransaction*> mapPriority;
         for (map<uint256, CTransaction>::iterator mi = mapTransactions.begin(); mi != mapTransactions.end(); ++mi)
         {
             CTransaction& tx = (*mi).second;
+            // kangmo : question - how come a coinbase transaction exists in the mempool?
             if (tx.IsCoinBase() || !tx.IsFinal())
                 continue;
 
@@ -2814,6 +2830,9 @@ CBlock* CreateNewBlock(CReserveKey& reservekey)
                 // Read prev transaction
                 CTransaction txPrev;
                 CTxIndex txindex;
+
+                // kangmo : comment - ReadFromDisk gets txindex by txin.prevout transaction hash.
+                // kangmo : comment - The previous transaction was was not found. This transaction is an orphan.
                 if (!txPrev.ReadFromDisk(txdb, txin.prevout, txindex))
                 {
                     // Has to wait for dependencies
@@ -2824,6 +2843,7 @@ CBlock* CreateNewBlock(CReserveKey& reservekey)
                         porphan = &vOrphan.back();
                     }
                     mapDependers[txin.prevout.hash].push_back(porphan);
+                    // kangmo : comment - An orphan can depend on many transactions, which are pointed by outpoints on inputs.
                     porphan->setDependsOn.insert(txin.prevout.hash);
                     continue;
                 }
@@ -2868,6 +2888,7 @@ CBlock* CreateNewBlock(CReserveKey& reservekey)
 
             // Size limits
             unsigned int nTxSize = ::GetSerializeSize(tx, SER_NETWORK);
+            // kangmo : question - MAX_BLOCK_SIZE_GEN is 0.5MB. Why check if block size + tx size is greater than 0.5MB?
             if (nBlockSize + nTxSize >= MAX_BLOCK_SIZE_GEN)
                 continue;
             int nTxSigOps = tx.GetSigOpCount();
@@ -2880,8 +2901,9 @@ CBlock* CreateNewBlock(CReserveKey& reservekey)
 
             // Connecting shouldn't fail due to dependency on other memory pool transactions
             // because we're already processing them in order of dependency
+            // kangmo : comment - We are processing non-orphan transactions. So connecting input shoud succeed.
             map<uint256, CTxIndex> mapTestPoolTmp(mapTestPool);
-            if (!tx.ConnectInputs(txdb, mapTestPoolTmp, CDiskTxPos(1,1,1), pindexPrev, nFees, false, true, nMinFee))
+            if (!tx.ConnectInputs(txdb, mapTestPoolTmp, CDiskTxPos(1,1,1), pindexPrev, nFees, false/*fBlock*/, true/*fMiner*/, nMinFee))
                 continue;
             swap(mapTestPool, mapTestPoolTmp);
 
@@ -2894,12 +2916,15 @@ CBlock* CreateNewBlock(CReserveKey& reservekey)
             uint256 hash = tx.GetHash();
             if (mapDependers.count(hash))
             {
+            	// kangmo : comment - for each orphan tranaction that depends on the current transaction,
                 BOOST_FOREACH(COrphan* porphan, mapDependers[hash])
                 {
+                	// kangmo : comment - if the orphan has at least one transaction that the orphan depends on,
                     if (!porphan->setDependsOn.empty())
                     {
+                    	// kangmo : comment - remove the transaction from the depends-on list.
                         porphan->setDependsOn.erase(hash);
-                        if (porphan->setDependsOn.empty())
+                        if (porphan->setDependsOn.empty()) // kangmo : comment - add the orphan to the priority queue if no more transactions exist on the depends-on list.
                             mapPriority.insert(make_pair(-porphan->dPriority, porphan->ptx));
                     }
                 }
@@ -2918,7 +2943,7 @@ CBlock* CreateNewBlock(CReserveKey& reservekey)
     return pblock.release();
 }
 
-
+// kangmo : comment - set an extra nonce to the coinbase data.
 void IncrementExtraNonce(CBlock* pblock, CBlockIndex* pindexPrev, unsigned int& nExtraNonce)
 {
     // Update nExtraNonce
@@ -2933,7 +2958,7 @@ void IncrementExtraNonce(CBlock* pblock, CBlockIndex* pindexPrev, unsigned int& 
     pblock->hashMerkleRoot = pblock->BuildMerkleTree();
 }
 
-
+// kangmo : comment - pre-calculate the block hash up to the n
 void FormatHashBuffers(CBlock* pblock, char* pmidstate, char* pdata, char* phash1)
 {
     //
@@ -2973,13 +2998,15 @@ void FormatHashBuffers(CBlock* pblock, char* pmidstate, char* pdata, char* phash
         ((unsigned int*)&tmp)[i] = ByteReverse(((unsigned int*)&tmp)[i]);
 
     // Precalc the first half of the first hash, which stays constant
+    // kangmo : comment - SHA256Transform calculates SAH256 hash from the input. Use only 64 bytes from the given input(&tmp.block).
     SHA256Transform(pmidstate, &tmp.block, pSHA256InitState);
 
     memcpy(pdata, &tmp.block, 128);
+    // kangmo : question - tmp.hash1 is 32 bytes. why memcopy 64 bytes?
     memcpy(phash1, &tmp.hash1, 64);
 }
 
-
+// kangmo : comment - this function is called when a solution was found. It attaches the given block to the main blockchain.
 bool CheckWork(CBlock* pblock, CWallet& wallet, CReserveKey& reservekey)
 {
     uint256 hash = pblock->GetHash();
@@ -3018,6 +3045,7 @@ bool CheckWork(CBlock* pblock, CWallet& wallet, CReserveKey& reservekey)
 
 void static ThreadBitcoinMiner(void* parg);
 
+// kangmo : comment : The thread function that runs in a thread to mine Bitcoins
 void static BitcoinMiner(CWallet *pwallet)
 {
     printf("BitcoinMiner started\n");
