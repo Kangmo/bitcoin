@@ -911,6 +911,7 @@ void ShrinkDebugFile()
 //
 static int64 nMockTime = 0;  // For unit testing
 
+// kangmo : comment - return the current unix timestamp.
 int64 GetTime()
 {
     if (nMockTime) return nMockTime;

@@ -963,7 +963,7 @@ bool CheckSig(vector<unsigned char> vchSig, vector<unsigned char> vchPubKey, CSc
 
 
 
-
+// kangmo : comment - (1) check if the locking script is either P2PK or P2PKH. (2) extract public key or public key hash to put into vSolutionsRet
 bool Solver(const CScript& scriptPubKey, vector<pair<opcodetype, valtype> >& vSolutionRet)
 {
     // Templates

@@ -138,6 +138,7 @@ public:
     uint256 hashContinue;
     CBlockIndex* pindexLastGetBlocksBegin;
     uint256 hashLastGetBlocksEnd;
+    // kangmo : comment - Part of the Version message : 4	start_height	int32_t	The last block received by the emitting node
     int nStartingHeight;
 
     // flood relay

@@ -438,6 +438,7 @@ public:
         return SerializeHash(*this);
     }
 
+    // kangmo : transaction -> lock time
     bool IsFinal(int nBlockHeight=0, int64 nBlockTime=0) const
     {
         // Time based nLockTime implemented in 0.1.6
@@ -449,12 +450,14 @@ public:
             nBlockTime = GetAdjustedTime();
         if ((int64)nLockTime < (nLockTime < LOCKTIME_THRESHOLD ? (int64)nBlockHeight : nBlockTime))
             return true;
+        // kangmo : why all inputs should have (nSequence == UINT_MAX)?
         BOOST_FOREACH(const CTxIn& txin, vin)
             if (!txin.IsFinal())
                 return false;
         return true;
     }
 
+    // kangmo : Is nSequence used by the latest Bitcoin core as well? Looks like two transactions with the same inputs could have different sequence values for each input.
     bool IsNewerThan(const CTransaction& old) const
     {
         if (vin.size() != old.vin.size())
@@ -501,9 +504,12 @@ public:
 
     bool IsStandard() const
     {
+    	// kangmo : req - need to check if the unlocking script has push operations only.
         BOOST_FOREACH(const CTxIn& txin, vin)
             if (!txin.scriptSig.IsPushOnly())
                 return error("nonstandard txin: %s", txin.scriptSig.ToString().c_str());
+
+        // kangmo : req - need to check if the locking script matches a list of templates such as P2PK, P2PKH.
         BOOST_FOREACH(const CTxOut& txout, vout)
             if (!::IsStandard(txout.scriptPubKey))
                 return error("nonstandard txout: %s", txout.scriptPubKey.ToString().c_str());
@@ -516,12 +522,14 @@ public:
         BOOST_FOREACH(const CTxOut& txout, vout)
         {
             nValueOut += txout.nValue;
+            // kangmo : req - need to check the range of each value on transaction outputs.
             if (!MoneyRange(txout.nValue) || !MoneyRange(nValueOut))
                 throw std::runtime_error("CTransaction::GetValueOut() : value out of range");
         }
         return nValueOut;
     }
 
+    // kangmo - investigate : need fee check based on priority.
     static bool AllowFree(double dPriority)
     {
         // Large (in bytes) low-priority (new, small-coin) transactions
@@ -529,6 +537,7 @@ public:
         return dPriority > COIN * 144 / 250;
     }
 
+    // kangmo - req : need to calculte minimum fee.
     int64 GetMinFee(unsigned int nBlockSize=1, bool fAllowFree=true, bool fForRelay=false) const
     {
         // Base fee is either MIN_TX_FEE or MIN_RELAY_TX_FEE
@@ -846,6 +855,9 @@ public:
         return (int64)nTime;
     }
 
+    // kangmo : req - (P2) need to count the script operations for all transactions in a block? See MAX_BLOCK_SIZE;
+    //static const unsigned int MAX_BLOCK_SIZE_GEN = MAX_BLOCK_SIZE/2;
+    //static const int MAX_BLOCK_SIGOPS = MAX_BLOCK_SIZE/50;
     int GetSigOpCount() const
     {
         int n = 0;
@@ -854,7 +866,7 @@ public:
         return n;
     }
 
-
+    // kangmo : req - (P1) need to build a merkle tree.
     uint256 BuildMerkleTree() const
     {
         vMerkleTree.clear();
@@ -913,6 +925,7 @@ public:
         if (!fileout)
             return error("CBlock::WriteToDisk() : AppendBlockFile failed");
 
+        // kangmo : req - (P2) prepend blocks with magic values(0xf9, 0xbe, 0xb4, 0xd9) and the size of the block.
         // Write index header
         unsigned int nSize = fileout.GetSerializeSize(*this);
         fileout << FLATDATA(pchMessageStart) << nSize;
@@ -923,6 +936,7 @@ public:
             return error("CBlock::WriteToDisk() : ftell failed");
         fileout << *this;
 
+        // kangmo : req - (P1) Need to flush files for each block
         // Flush stdio buffers and commit to disk before returning
         fflush(fileout);
         if (!IsInitialBlockDownload() || (nBestHeight+1) % 500 == 0)
@@ -994,6 +1008,7 @@ public:
 
 
 
+// kangmo : question - A blockindex may have multiple pprev pointing back to it?
 
 //
 // The block chain is a tree shaped structure starting with the
@@ -1006,12 +1021,16 @@ public:
 class CBlockIndex
 {
 public:
+	// kangmo : comment - this is the hash of the block header.
     const uint256* phashBlock;
     CBlockIndex* pprev;
     CBlockIndex* pnext;
     unsigned int nFile;
     unsigned int nBlockPos;
     int nHeight;
+
+    // kangmo - comment : The cumulative amount of hash calculations done from the genesis block to this block.
+    // CBlock::AddToBlockIndex : pindexNew->bnChainWork = (pindexNew->pprev ? pindexNew->pprev->bnChainWork : 0) + pindexNew->GetBlockWork();
     CBigNum bnChainWork;
 
     // block header
@@ -1079,6 +1098,7 @@ public:
         return (int64)nTime;
     }
 
+    // kangmo : comment - How many times should we calculate hashes to find a block?
     CBigNum GetBlockWork() const
     {
         CBigNum bnTarget;
@@ -1088,6 +1108,7 @@ public:
         return (CBigNum(1)<<256) / (bnTarget+1);
     }
 
+    // kangmo : req - (P1) need to be able to know if a block is in the best blockchain.
     bool IsInMainChain() const
     {
         return (pnext || this == pindexBest);

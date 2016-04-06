@@ -28,14 +28,18 @@ map<COutPoint, CInPoint> mapNextTx;
 
 map<uint256, CBlockIndex*> mapBlockIndex;
 uint256 hashGenesisBlock("0x000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f");
+// kangmo : req - (P2) need to have the highest difficulty for the proof of work.
 static CBigNum bnProofOfWorkLimit(~uint256(0) >> 32);
 const int nTotalBlocksEstimate = 140700; // Conservative estimate of total nr of blocks on main chain
+
+// kangmo : req - (P1) Need to do IBD if we are more than 120 blocks behind the best blockchain.
 const int nInitialBlockThreshold = 120; // Regard blocks up until N-threshold as "initial download"
 CBlockIndex* pindexGenesisBlock = NULL;
 int nBestHeight = -1;
 CBigNum bnBestChainWork = 0;
 CBigNum bnBestInvalidWork = 0;
 uint256 hashBestChain = 0;
+// kangmo : comment - The block index of the last block on the best blockchain.
 CBlockIndex* pindexBest = NULL;
 int64 nTimeBestReceived = 0;
 
@@ -220,6 +224,7 @@ bool CTransaction::ReadFromDisk(CTxDB& txdb, COutPoint prevout, CTxIndex& txinde
         return false;
     if (!ReadFromDisk(txindexRet.pos))
         return false;
+    // kangmo : Why? is prevout.n relevant to the current transaction's vout?
     if (prevout.n >= vout.size())
     {
         SetNull();
@@ -734,6 +739,7 @@ int GetTotalBlocksEstimate()
     }
 }
 
+// kangmo : comment - used by GUI
 // Return maximum amount of blocks that other nodes claim to have
 int GetNumBlocksOfPeers()
 {
@@ -751,6 +757,8 @@ bool IsInitialBlockDownload()
         pindexLastBest = pindexBest;
         nLastUpdate = GetTime();
     }
+    // kangmo : comment - GetTime() returns the current unix timestamp in seconds.
+    // kangmo : req - (P1) If the best block is behind 1 day from now, do IBD.
     return (GetTime() - nLastUpdate < 10 &&
             pindexBest->GetBlockTime() < GetTime() - 24 * 60 * 60);
 }
@@ -1143,6 +1151,7 @@ bool CBlock::SetBestChain(CTxDB& txdb, CBlockIndex* pindexNew)
     uint256 hash = GetHash();
 
     txdb.TxnBegin();
+    // kangmo : comment - set the genesis block as the current best block.
     if (pindexGenesisBlock == NULL && hash == hashGenesisBlock)
     {
         txdb.WriteHashBestChain(hash);
@@ -1150,6 +1159,7 @@ bool CBlock::SetBestChain(CTxDB& txdb, CBlockIndex* pindexNew)
             return error("SetBestChain() : TxnCommit failed");
         pindexGenesisBlock = pindexNew;
     }
+    // kangmo : comment - add a new block on top of the current best block.
     else if (hashPrevBlock == hashBestChain)
     {
         // Adding to current best branch
@@ -1165,11 +1175,12 @@ bool CBlock::SetBestChain(CTxDB& txdb, CBlockIndex* pindexNew)
         // Add to current best branch
         pindexNew->pprev->pnext = pindexNew;
 
+        // kangmo : req - (P1) remove from mempool for transactions in the block added as the best block.
         // Delete redundant memory transactions
         BOOST_FOREACH(CTransaction& tx, vtx)
             tx.RemoveFromMemoryPool();
     }
-    else
+    else // kangmo : The best block is changed.
     {
         // New best branch
         if (!Reorganize(txdb, pindexNew))
@@ -1227,6 +1238,7 @@ bool CBlock::AddToBlockIndex(unsigned int nFile, unsigned int nBlockPos)
     if (!txdb.TxnCommit())
         return false;
 
+    // kangmo : req - (P1) based on the chain work, set the bet blockchain.
     // New best
     if (pindexNew->bnChainWork > bnBestChainWork)
         if (!SetBestChain(txdb, pindexNew))
@@ -1254,18 +1266,23 @@ bool CBlock::CheckBlock() const
     // These are checks that are independent of context
     // that can be verified before saving an orphan block.
 
+	// kangmo : question - need to check the transaction count?
+	// kangmo : req - (P1) check the serialized block size.
     // Size limits
     if (vtx.empty() || vtx.size() > MAX_BLOCK_SIZE || ::GetSerializeSize(*this, SER_NETWORK) > MAX_BLOCK_SIZE)
         return DoS(100, error("CheckBlock() : size limits failed"));
 
+    // kangmo : req - (P1) check the block hash vs target hash
     // Check proof of work matches claimed amount
     if (!CheckProofOfWork(GetHash(), nBits))
         return DoS(50, error("CheckBlock() : proof of work failed"));
 
+    // kangmo : req - (P1) check the block timestamp.
     // Check timestamp
     if (GetBlockTime() > GetAdjustedTime() + 2 * 60 * 60)
         return error("CheckBlock() : block timestamp too far in the future");
 
+    // kangmo : req - (P1) check the first transaction is coinbase, and others are not.
     // First transaction must be coinbase, the rest must not be
     if (vtx.empty() || !vtx[0].IsCoinBase())
         return DoS(100, error("CheckBlock() : first tx is not coinbase"));
@@ -1273,15 +1290,18 @@ bool CBlock::CheckBlock() const
         if (vtx[i].IsCoinBase())
             return DoS(100, error("CheckBlock() : more than one coinbase"));
 
+    // kangmo : req - (P1) check each transaction in a block.
     // Check transactions
     BOOST_FOREACH(const CTransaction& tx, vtx)
         if (!tx.CheckTransaction())
             return DoS(tx.nDoS, error("CheckBlock() : CheckTransaction failed"));
 
+    // kangmo : req - (P2) check the number of script operations on the locking/unlocking script.
     // Check that it's not full of nonstandard transactions
     if (GetSigOpCount() > MAX_BLOCK_SIGOPS)
         return DoS(100, error("CheckBlock() : out-of-bounds SigOpCount"));
 
+    // kangmo : req - (P1) Calculate the merkle root hash, compare it with the one in the block header.
     // Check merkleroot
     if (hashMerkleRoot != BuildMerkleTree())
         return DoS(100, error("CheckBlock() : hashMerkleRoot mismatch"));
@@ -1291,11 +1311,13 @@ bool CBlock::CheckBlock() const
 
 bool CBlock::AcceptBlock()
 {
+	// kangmo : req - (P1) Need to check if the same blockheader hash exists.
     // Check for duplicate
     uint256 hash = GetHash();
     if (mapBlockIndex.count(hash))
         return error("AcceptBlock() : block already in mapBlockIndex");
 
+    // kangmo : req - (P2) Need to increase DoS score if an orphan block was received.
     // Get prev block index
     map<uint256, CBlockIndex*>::iterator mi = mapBlockIndex.find(hashPrevBlock);
     if (mi == mapBlockIndex.end())
@@ -1303,19 +1325,23 @@ bool CBlock::AcceptBlock()
     CBlockIndex* pindexPrev = (*mi).second;
     int nHeight = pindexPrev->nHeight+1;
 
+    // kangmo : req - (P2) Need to increase DoS score if the block hash does not meet the required difficulty.
     // Check proof of work
     if (nBits != GetNextWorkRequired(pindexPrev))
         return DoS(100, error("AcceptBlock() : incorrect proof of work"));
 
+    // kangmo : req - (P1) Need to get the median timestamp for the past N blocks.
     // Check timestamp against prev
     if (GetBlockTime() <= pindexPrev->GetMedianTimePast())
         return error("AcceptBlock() : block's timestamp is too early");
 
+    // kangmo : req - (P1) Need to check the lock time of all transactions.
     // Check that all transactions are finalized
     BOOST_FOREACH(const CTransaction& tx, vtx)
         if (!tx.IsFinal(nHeight, GetBlockTime()))
             return DoS(10, error("AcceptBlock() : contains a non-final transaction"));
 
+    // kangmo : req - (P1) Need to check block hashes for checkpoint blocks.
     // Check that the block chain matches the known block chain up to a checkpoint
     if (!fTestNet)
         if ((nHeight ==  11111 && hash != uint256("0x0000000069e244f73d78e8fd29ba2fd2ed618bd6fa2ee92559f542fdb26e7c1d")) ||
@@ -1339,10 +1365,13 @@ bool CBlock::AcceptBlock()
     if (!AddToBlockIndex(nFile, nBlockPos))
         return error("AcceptBlock() : AddToBlockIndex failed");
 
+    // kangmo : req - (P1) relay the new block to peers as an inventory.
     // Relay inventory, but don't relay old inventory during initial block download
     if (hashBestChain == hash)
         CRITICAL_BLOCK(cs_vNodes)
             BOOST_FOREACH(CNode* pnode, vNodes)
+				// kangmo : question - why subtracting 2000 from the best block height of the node?
+				// kangmo : question - why using the height 140700 if the start height is -1?
                 if (nBestHeight > (pnode->nStartingHeight != -1 ? pnode->nStartingHeight - 2000 : 140700))
                     pnode->PushInventory(CInv(MSG_BLOCK, hash));
 
