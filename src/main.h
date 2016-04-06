@@ -537,7 +537,7 @@ public:
         return dPriority > COIN * 144 / 250;
     }
 
-    // kangmo - req : need to calculte minimum fee.
+    // kangmo : req - (P2) need to calculte minimum fee.
     int64 GetMinFee(unsigned int nBlockSize=1, bool fAllowFree=true, bool fForRelay=false) const
     {
         // Base fee is either MIN_TX_FEE or MIN_RELAY_TX_FEE

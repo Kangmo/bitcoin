@@ -853,7 +853,8 @@ bool CTransaction::ConnectInputs(CTxDB& txdb, map<uint256, CTxIndex>& mapTestPoo
 
             // Read txPrev
             CTransaction txPrev;
-            if (!fFound || txindex.pos == CDiskTxPos(1,1,1))
+            // kangmo : question - when does CTxIndex.pos becomes CDiskTxPos(1,1,1)?
+            if (!fFound || txindex.pos == CDiskTxPos(1,1,1)) // kangmo : comment - If the transaction is not found on disk, get it from the mempool.
             {
                 // Get prev tx from single transactions in memory
                 CRITICAL_BLOCK(cs_mapTransactions)
@@ -872,16 +873,18 @@ bool CTransaction::ConnectInputs(CTxDB& txdb, map<uint256, CTxIndex>& mapTestPoo
                     return error("ConnectInputs() : %s ReadFromDisk prev tx %s failed", GetHash().ToString().substr(0,10).c_str(),  prevout.hash.ToString().substr(0,10).c_str());
             }
 
+            // kangmo : req - (P2) Increase DoS score if an invalid OutPoint was found in a transaction input.
             if (prevout.n >= txPrev.vout.size() || prevout.n >= txindex.vSpent.size())
                 return DoS(100, error("ConnectInputs() : %s prevout.n out of range %d %d %d prev tx %s\n%s", GetHash().ToString().substr(0,10).c_str(), prevout.n, txPrev.vout.size(), txindex.vSpent.size(), prevout.hash.ToString().substr(0,10).c_str(), txPrev.ToString().c_str()));
 
+            // kangmo : req - (P1) check coinbase maturity for outpoints spent by a transaction.
             // If prev is coinbase, check that it's matured
             if (txPrev.IsCoinBase())
                 for (CBlockIndex* pindex = pindexBlock; pindex && pindexBlock->nHeight - pindex->nHeight < COINBASE_MATURITY; pindex = pindex->pprev)
                     if (pindex->nBlockPos == txindex.pos.nBlockPos && pindex->nFile == txindex.pos.nFile)
                         return error("ConnectInputs() : tried to spend coinbase at depth %d", pindexBlock->nHeight - pindex->nHeight);
 
-            // Skip ECDSA signature verification when connecting blocks (fBlock=true) during initial download
+            // kangmo : req - (P1) Skip ECDSA signature verification when connecting blocks (fBlock=true) during initial download
             // (before the last blockchain checkpoint). This is safe because block merkle hashes are
             // still computed and checked, and any change will be caught at the next checkpoint.
             if (!(fBlock && IsInitialBlockDownload()))
@@ -889,6 +892,7 @@ bool CTransaction::ConnectInputs(CTxDB& txdb, map<uint256, CTxIndex>& mapTestPoo
                 if (!VerifySignature(txPrev, *this, i))
                     return DoS(100,error("ConnectInputs() : %s VerifySignature failed", GetHash().ToString().substr(0,10).c_str()));
 
+            // kangmo : req - (P1) check double spends for each OutPoint of each transaction input in a transaction.
             // Check for conflicts (double-spend)
             // This doesn't trigger the DoS code on purpose; if it did, it would make it easier
             // for an attacker to attempt to split the network.
@@ -900,6 +904,7 @@ bool CTransaction::ConnectInputs(CTxDB& txdb, map<uint256, CTxIndex>& mapTestPoo
             if (!MoneyRange(txPrev.vout[prevout.n].nValue) || !MoneyRange(nValueIn))
                 return DoS(100, error("ConnectInputs() : txin values out of range"));
 
+            // kangmo : req - (P1) for a transaction, keep the transaction spending each output if any.
             // Mark outpoints as spent
             txindex.vSpent[prevout.n] = posThisTx;
 
@@ -910,6 +915,7 @@ bool CTransaction::ConnectInputs(CTxDB& txdb, map<uint256, CTxIndex>& mapTestPoo
             }
         }
 
+        // kangmo : req - (P1) check if the sum of input values is greater than or equal to the sum of outputs.
         if (nValueIn < GetValueOut())
             return DoS(100, error("ConnectInputs() : %s value in < value out", GetHash().ToString().substr(0,10).c_str()));
 
@@ -917,6 +923,8 @@ bool CTransaction::ConnectInputs(CTxDB& txdb, map<uint256, CTxIndex>& mapTestPoo
         int64 nTxFee = nValueIn - GetValueOut();
         if (nTxFee < 0)
             return DoS(100, error("ConnectInputs() : %s nTxFee < 0", GetHash().ToString().substr(0,10).c_str()));
+
+        // kangmo : req - (P2) check the minimum transaction fee for each transaction.
         if (nTxFee < nMinFee)
             return false;
         nFees += nTxFee;
@@ -1007,6 +1015,7 @@ bool CBlock::DisconnectBlock(CTxDB& txdb, CBlockIndex* pindex)
     return true;
 }
 
+// kangmo : comment - called when a new block is connected on the tip of the best blockchain.
 bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex)
 {
     // Check it again in case a previous version let a bad block in
@@ -1016,14 +1025,19 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex)
     //// issue here: it doesn't know the version
     unsigned int nTxPos = pindex->nBlockPos + ::GetSerializeSize(CBlock(), SER_DISK) - 1 + GetSizeOfCompactSize(vtx.size());
 
+    // kangmo : comment - step 1 : For each transaction in the block, mark the output pointed by each outpoint in the transaction is spent by the transaction.
+    // kangmo : comment - key ; transaction hash of each outpoint, value ; the CTxIndex which marks which transaction spends the output pointed by the outpoint.
     map<uint256, CTxIndex> mapQueuedChanges;
+
+    // kangmo : comment - the nFees will have sum of fees for all transactions in the block.
     int64 nFees = 0;
     BOOST_FOREACH(CTransaction& tx, vtx)
     {
         CDiskTxPos posThisTx(pindex->nFile, pindex->nBlockPos, nTxPos);
         nTxPos += ::GetSerializeSize(tx, SER_DISK);
 
-        if (!tx.ConnectInputs(txdb, mapQueuedChanges, posThisTx, pindex, nFees, true, false))
+        // kangmo : comment - the fee is summed up to nFees variable.
+        if (!tx.ConnectInputs(txdb, mapQueuedChanges, posThisTx, pindex, nFees, true/*fBlock*/, false/*fMiner*/))
             return false;
     }
     // Write queued txindex changes
@@ -1033,6 +1047,7 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex)
             return error("ConnectBlock() : UpdateTxIndex failed");
     }
 
+    // kangmo : req - (P1) Check if the generation transaction's output amount is less than or equal to the reward + sum of fees for all transactions in the block.
     if (vtx[0].GetValueOut() > GetBlockValue(pindex->nHeight, nFees))
         return false;
 
@@ -1046,6 +1061,7 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex)
             return error("ConnectBlock() : WriteBlockIndex failed");
     }
 
+    // kangmo : req - (P1) Notify wallet each transaction in a block connected to the blockchain.
     // Watch for transactions paying to me
     BOOST_FOREACH(CTransaction& tx, vtx)
         SyncWithWallets(tx, this, true);
@@ -1057,51 +1073,68 @@ bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
 {
     printf("REORGANIZE\n");
 
+    // kangmo : comment - Step 1 : Find the common block(pfork) between the current blockchain(pindexBest) and the new longer blockchain.
     // Find the fork
     CBlockIndex* pfork = pindexBest;
     CBlockIndex* plonger = pindexNew;
     while (pfork != plonger)
     {
+    	// kangmo : comment - Step 1.1 : Traverse the longer chain backwards until we reach at the height of the shorter block chain.
         while (plonger->nHeight > pfork->nHeight)
             if (!(plonger = plonger->pprev))
                 return error("Reorganize() : plonger->pprev is null");
+
+        // kangmo : comment - Step 2.1 : If the tip of the shorter blockchain is part of the longer blockchain, stop.
         if (pfork == plonger)
             break;
+
+        // kangmo : comment - Step 3.1 : Traverse the shorter chain backwards by one block.
         if (!(pfork = pfork->pprev))
             return error("Reorganize() : pfork->pprev is null");
     }
 
+    // kangmo : comment - Now, pfork is the common block between the current best blockchain and the longer blockchain.
+
+    // kangmo : comment - Step 2 : Get the list of blocks to disconnect from the current blockchain
     // List of what to disconnect
     vector<CBlockIndex*> vDisconnect;
     for (CBlockIndex* pindex = pindexBest; pindex != pfork; pindex = pindex->pprev)
         vDisconnect.push_back(pindex);
 
+    // kangmo : comment - Step 3 : Get the list of blocks to connect from the longer blockchain to the current blockchain.
     // List of what to connect
     vector<CBlockIndex*> vConnect;
     for (CBlockIndex* pindex = pindexNew; pindex != pfork; pindex = pindex->pprev)
         vConnect.push_back(pindex);
+
+    // kangmo : comment - Step 4 : Reorder blocks so that the blocks with lower height come first.
     reverse(vConnect.begin(), vConnect.end());
 
+    // kangmo : comment - Step 5 : Disconnect blocks from the current (shorter) blockchain.
     // Disconnect shorter branch
     vector<CTransaction> vResurrect;
     BOOST_FOREACH(CBlockIndex* pindex, vDisconnect)
     {
+    	// kangmo : comment - Step 5.1 : Read each block, and disconnect each block.
         CBlock block;
         if (!block.ReadFromDisk(pindex))
             return error("Reorganize() : ReadFromDisk for disconnect failed");
         if (!block.DisconnectBlock(txdb, pindex))
             return error("Reorganize() : DisconnectBlock failed");
 
+    	// kangmo : comment - Step 5.2 : Prepare transactions to add back to the mempool.
         // Queue memory transactions to resurrect
         BOOST_FOREACH(const CTransaction& tx, block.vtx)
             if (!tx.IsCoinBase())
                 vResurrect.push_back(tx);
     }
 
+    // kangmo : comment - Step 6 : Connect blocks from the longer blockchain to the current blockchain.
     // Connect longer branch
     vector<CTransaction> vDelete;
     for (int i = 0; i < vConnect.size(); i++)
     {
+    	// kangmo : comment - Step 6.1 : Read block, connect the block to the current blockchain, which does not have the disconnected blocks.
         CBlockIndex* pindex = vConnect[i];
         CBlock block;
         if (!block.ReadFromDisk(pindex))
@@ -1113,10 +1146,13 @@ bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
             return error("Reorganize() : ConnectBlock failed");
         }
 
+        // kangmo : comment - Step 6.2 : Prepare transactions tro remove from the mempool
         // Queue memory transactions to delete
         BOOST_FOREACH(const CTransaction& tx, block.vtx)
             vDelete.push_back(tx);
     }
+
+    // kangmo : comment - Step 7 : Write the hash of the tip block on the best blockchain, commit the db transaction.
     if (!txdb.WriteHashBestChain(pindexNew->GetBlockHash()))
         return error("Reorganize() : WriteHashBestChain failed");
 
@@ -1124,6 +1160,7 @@ bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
     if (!txdb.TxnCommit())
         return error("Reorganize() : TxnCommit failed");
 
+    // kangmo : comment - Step 8 : Set the next block pointer for each connected block. Also, set next block pointer to null for each disconnected block.
     // Disconnect shorter branch
     BOOST_FOREACH(CBlockIndex* pindex, vDisconnect)
         if (pindex->pprev)
@@ -1134,6 +1171,7 @@ bool static Reorganize(CTxDB& txdb, CBlockIndex* pindexNew)
         if (pindex->pprev)
             pindex->pprev->pnext = pindex;
 
+    // kangmo : comment - Step 9 : Remove transactions from mempool, add transactions to mempool.
     // Resurrect memory transactions that were in the disconnected branch
     BOOST_FOREACH(CTransaction& tx, vResurrect)
         tx.AcceptToMemoryPool(txdb, false);
@@ -1150,6 +1188,7 @@ bool CBlock::SetBestChain(CTxDB& txdb, CBlockIndex* pindexNew)
 {
     uint256 hash = GetHash();
 
+    // kangmo : req - (P1) Need to support transactions to atomically apply the effect of the blockchain modification.
     txdb.TxnBegin();
     // kangmo : comment - set the genesis block as the current best block.
     if (pindexGenesisBlock == NULL && hash == hashGenesisBlock)
@@ -1180,7 +1219,7 @@ bool CBlock::SetBestChain(CTxDB& txdb, CBlockIndex* pindexNew)
         BOOST_FOREACH(CTransaction& tx, vtx)
             tx.RemoveFromMemoryPool();
     }
-    else // kangmo : The best block is changed.
+    else // kangmo : req - (P1) Reorganize the blockchain if the best block has to be changed.
     {
         // New best branch
         if (!Reorganize(txdb, pindexNew))
@@ -1238,7 +1277,8 @@ bool CBlock::AddToBlockIndex(unsigned int nFile, unsigned int nBlockPos)
     if (!txdb.TxnCommit())
         return false;
 
-    // kangmo : req - (P1) based on the chain work, set the bet blockchain.
+    // kangmo : req - (P1) based on the chain work, set the best blockchain.
+    // kangmo : question - Does this mean we will change the tip of the best blockchain if a new block at the same height has greater chain work?
     // New best
     if (pindexNew->bnChainWork > bnBestChainWork)
         if (!SetBestChain(txdb, pindexNew))
