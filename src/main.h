@@ -1553,6 +1553,7 @@ public:
         return AppliesTo(VERSION, ::pszSubVer);
     }
 
+    // kangmo : comment - relay the alert message to a peer if the peer needs to receive it.
     bool RelayTo(CNode* pnode) const
     {
         if (!IsInEffect())

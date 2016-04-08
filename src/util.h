@@ -569,7 +569,7 @@ inline uint160 Hash160(const std::vector<unsigned char>& vch)
     return hash2;
 }
 
-
+// kangmo : comment - Get the median value of 'size' count of recent values.
 // Median filter over a stream of values
 // Returns the median of the last N numbers
 template <typename T> class CMedianFilter

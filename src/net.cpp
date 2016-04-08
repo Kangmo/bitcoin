@@ -57,6 +57,7 @@ CCriticalSection cs_mapAddresses;
 map<CInv, CDataStream> mapRelay;
 deque<pair<int64, CInv> > vRelayExpiration;
 CCriticalSection cs_mapRelay;
+// kangmo : comment - The inventories that we already asked to at least a node. Key : inventory, Value : the timestamp of the time we asked.
 map<CInv, int64> mapAlreadyAskedFor;
 
 // Settings

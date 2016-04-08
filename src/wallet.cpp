@@ -652,6 +652,7 @@ void CWalletTx::RelayWalletTransaction(CTxDB& txdb)
         {
             uint256 hash = tx.GetHash();
             if (!txdb.ContainsTx(hash))
+            	// kangmo : comment - Keep responses to inventory messages such as "tx" to relay for 15 minutes.
                 RelayMessage(CInv(MSG_TX, hash), (CTransaction)tx);
         }
     }

@@ -931,6 +931,7 @@ int64 GetAdjustedTime()
     return GetTime() + nTimeOffset;
 }
 
+// kangmo : comment - Check if the current time of this computer is too far away from peers. nTime is the Version.timestamp sent by a peer whose ip address is ip.
 void AddTimeData(unsigned int ip, int64 nTime)
 {
     int64 nOffsetSample = nTime - GetTime();
@@ -950,6 +951,7 @@ void AddTimeData(unsigned int ip, int64 nTime)
     {
         sort(vTimeOffsets.begin(), vTimeOffsets.end());
         int64 nMedian = vTimeOffsets[vTimeOffsets.size()/2];
+        // kangmo : comment - Check if the median value of the time offsets is less than 70 minutes.
         // Only let other nodes change our time by so much
         if (abs64(nMedian) < 70 * 60)
         {
@@ -962,6 +964,7 @@ void AddTimeData(unsigned int ip, int64 nTime)
             static bool fDone;
             if (!fDone)
             {
+            	// kangmo : comment - At least a peer should have a time difference within 5 minutes. Otherwise show a warning.
                 // If nobody has a time different than ours but within 5 minutes of ours, give a warning
                 bool fMatch = false;
                 BOOST_FOREACH(int64 nOffset, vTimeOffsets)

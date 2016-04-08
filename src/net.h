@@ -240,11 +240,13 @@ public:
         setAddrKnown.insert(addr);
     }
 
+    // kangmo : comment - Reserve sending an address to the peer later if the peer does not know the address.
     void PushAddress(const CAddress& addr)
     {
         // Known checking here is only to save space from duplicates.
         // SendMessages will filter it again for knowns that were added
         // after addresses were pushed.
+    	// kangmo : comment - The setAddrKnown has the addresses that are already sent to the peer.
         if (addr.IsValid() && !setAddrKnown.count(addr))
             vAddrToSend.push_back(addr);
     }
@@ -623,6 +625,7 @@ void RelayMessage(const CInv& inv, const T& a)
     RelayMessage(inv, ss);
 }
 
+// kangmo : req - Keep responses to inventory messages such as "tx" to relay for 15 minutes.
 template<>
 inline void RelayMessage<>(const CInv& inv, const CDataStream& ss)
 {
